@@ -1,20 +1,114 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import requests
+import webbrowser
+
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from os.path import expanduser
+
+from rauth import OAuth2Service
+
+CONFIG_FILE = os.path.join(expanduser('~'), '.remote-config')
+SESSION_FILE = os.path.join(expanduser('~'), '.remote-session')
+
+API_URL = 'https://api.spotify.com/v1'
+REDIRECT_URL = 'http://localhost:1337'
 
 def get(url):
-    request = requests.get(root_url + url, headers=headers)
+    request = requests.get(API_URL + url, headers=get_headers())
     request.raise_for_status()
     return request.json()
 
 def post(url, params=None):
-    request = requests.post(root_url + url, headers=headers, params=params)
+    request = requests.post(API_URL + url, headers=get_headers(), params=params)
     request.raise_for_status()
 
 def put(url, params=None):
-    request = requests.put(root_url + url, headers=headers, params=params)
+    request = requests.put(API_URL + url, headers=get_headers(), params=params)
     request.raise_for_status()
+
+class HTTPRequestHandler(SimpleHTTPRequestHandler):
+
+    def log_request(self, code='-', size='-'):
+        pass
+
+    def do_GET(self):
+        self.server.code = self.path.split('code=')[1]
+
+        response = b'Ok, we\'ve got the token, you can close the window now.'
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.send_header("Content-length", len(response))
+        self.end_headers()
+        self.wfile.write(response)
+
+def session_decoder(payload):
+    return json.loads(payload.decode('utf-8'))
+
+def read_config():
+    return json.loads(open(CONFIG_FILE).read())
+
+def read_session():
+    return json.loads(open(SESSION_FILE).read())
+
+def get_headers():
+    return {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + read_session()['access_token']
+    }
+
+def init(args):
+    config = read_config()
+
+    service = OAuth2Service(
+        name='spotify',
+        client_id=config['client_id'],
+        client_secret=config['client_secret'],
+        authorize_url=config['authorize_url'],
+        access_token_url=config['access_token_url']
+    )
+
+    url = service.get_authorize_url(redirect_uri=REDIRECT_URL, response_type='code', scope=config['scope'])
+
+    webbrowser.open(url)
+
+    httpd = HTTPServer(('127.0.0.1', 1337), HTTPRequestHandler)
+    httpd.handle_request()
+
+    response = service.get_auth_session(decoder=session_decoder, data={
+        'grant_type': 'authorization_code',
+        'code': httpd.code,
+        'redirect_uri': REDIRECT_URL
+    })
+
+    f = open(SESSION_FILE, 'w')
+    f.write(json.dumps(response.access_token_response.json(), indent=4, sort_keys=True))
+    f.close()
+    os.chmod(SESSION_FILE, 0o600)
+
+def refresh(args):
+    config = read_config()
+    session = read_session()
+
+    service = OAuth2Service(
+        name='spotify',
+        client_id=config['client_id'],
+        client_secret=config['client_secret'],
+        authorize_url=config['authorize_url'],
+        access_token_url=config['access_token_url']
+    )
+
+    session['access_token'] = service.get_access_token(decoder=session_decoder, data={
+        'grant_type': 'refresh_token',
+        'refresh_token': session['refresh_token']
+    })
+
+    f = open(SESSION_FILE, 'w')
+    f.write(json.dumps(session, indent=4, sort_keys=True))
+    f.close()
+    os.chmod(SESSION_FILE, 0o600)
 
 def me(args):
     response = get('/me')
@@ -32,7 +126,9 @@ def devices(args):
         print(device['name'], ('(active)' if device['is_active'] else ''))
 
 def play(args):
-    if args.device:
+    if not args.device:
+        put('/me/player/play')
+    else:
         response = get('/me/player/devices')
         try:
             device_id = \
@@ -41,8 +137,6 @@ def play(args):
             put('/me/player/play', {'device_id': device_id})
         except IndexError:
             print('Device not found.')
-
-    #put('/me/player/play')
 
 def pause(args):
     put('/me/player/pause')
@@ -68,6 +162,12 @@ def shuffle(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='A remote control for spotify on the command line.')
     subparsers = parser.add_subparsers(help='actions')
+
+    parser_init = subparsers.add_parser('init', help='initialize OAUTH2 session')
+    parser_init.set_defaults(func=init)
+
+    parser_refresh = subparsers.add_parser('refresh', help='refresh OAUTH2 session')
+    parser_refresh.set_defaults(func=refresh)
 
     parser_me = subparsers.add_parser('me', help='show current user')
     parser_me.set_defaults(func=me)
@@ -108,13 +208,6 @@ if __name__ == "__main__":
     parser_shuffle.set_defaults(func=shuffle)
 
     args = parser.parse_args()
-
-    config = json.loads(open('/home/jochen/.remote').read())
-    root_url = 'https://api.spotify.com/v1'
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ' + config['token']
-    }
 
     try:
         args.func(args)
