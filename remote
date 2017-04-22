@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import requests
+
+def get(url):
+    request = requests.get(root_url + url, headers=headers)
+    request.raise_for_status()
+    return request.json()
+
+def post(url, params=None):
+    request = requests.post(root_url + url, headers=headers, params=params)
+    request.raise_for_status()
+
+def put(url, params=None):
+    request = requests.put(root_url + url, headers=headers, params=params)
+    request.raise_for_status()
+
+def me(args):
+    response = get('/me')
+    print(response['id'])
+
+def info(args):
+    response = get('/me/player')
+    print(response['item']['name'])
+    print(', '.join([artist['name'] for artist in response['item']['artists']]))
+    print(response['item']['album']['name'])
+
+def devices(args):
+    response = get('/me/player/devices')
+    for device in response['devices']:
+        print(device['name'], ('(active)' if device['is_active'] else ''))
+
+def play(args):
+    if args.device:
+        response = get('/me/player/devices')
+        try:
+            device_id = \
+                [device['id'] for device in response['devices'] if device['name'] == args.device][0]
+
+            put('/me/player/play', {'device_id': device_id})
+        except IndexError:
+            print('Device not found.')
+
+    #put('/me/player/play')
+
+def pause(args):
+    put('/me/player/pause')
+
+def prev(args):
+    post('/me/player/previous')
+
+def next(args):
+    post('/me/player/next')
+
+def seek(args):
+    put('/me/player/seek', {'position_ms': int(args.position * 1000)})
+
+def volume(args):
+    put('/me/player/volume', {'volume_percent': args.volume})
+
+def repeat(args):
+    put('/me/player/repeat', {'state': args.state})
+
+def shuffle(args):
+    put('/me/player/shuffle', {'state': args.state == 'on'})
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='A remote control for spotify on the command line.')
+    subparsers = parser.add_subparsers(help='actions')
+
+    parser_me = subparsers.add_parser('me', help='show current user')
+    parser_me.set_defaults(func=me)
+
+    parser_info = subparsers.add_parser('info', help='show current track')
+    parser_info.set_defaults(func=info)
+
+    parser_devices = subparsers.add_parser('devices', help='show available devices')
+    parser_devices.set_defaults(func=devices)
+
+    parser_play = subparsers.add_parser('play', help='start/resume playback')
+    parser_play.add_argument('device', nargs='?', default=False, help='name of the device')
+    parser_play.set_defaults(func=play)
+
+    parser_prev = subparsers.add_parser('prev', help='skip to previous track')
+    parser_prev.set_defaults(func=prev)
+
+    parser_next = subparsers.add_parser('next', help='skip to next track')
+    parser_next.set_defaults(func=next)
+
+    parser_pause = subparsers.add_parser('pause', help='pause playback')
+    parser_pause.set_defaults(func=pause)
+
+    parser_seek = subparsers.add_parser('seek', help='seek to position')
+    parser_seek.add_argument('position', help='position in seconds', type=float)
+    parser_seek.set_defaults(func=seek)
+
+    parser_volume = subparsers.add_parser('volume', help='set volume')
+    parser_volume.add_argument('volume', help='volume in %%', type=float)
+    parser_volume.set_defaults(func=volume)
+
+    parser_repeat = subparsers.add_parser('repeat', help='set repeat mode')
+    parser_repeat.add_argument('state', help='state of repeat mode', choices=('track', 'context', 'off'))
+    parser_repeat.set_defaults(func=repeat)
+
+    parser_shuffle = subparsers.add_parser('shuffle', help='set shuffle mode')
+    parser_shuffle.add_argument('state', help='state of shuffle mode', choices=('on', 'off'))
+    parser_shuffle.set_defaults(func=shuffle)
+
+    args = parser.parse_args()
+
+    config = json.loads(open('/home/jochen/.remote').read())
+    root_url = 'https://api.spotify.com/v1'
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + config['token']
+    }
+
+    try:
+        args.func(args)
+    except AttributeError:
+        parser.print_help()
