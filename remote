@@ -6,28 +6,87 @@ import requests
 import webbrowser
 
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-from os.path import expanduser
 
 from rauth import OAuth2Service
 
-CONFIG_FILE = os.path.join(expanduser('~'), '.remote-config')
-SESSION_FILE = os.path.join(expanduser('~'), '.remote-session')
+CONFIG_FILE = os.path.join(os.path.expanduser('~'), '.remote-config')
+SESSION_FILE = os.path.join(os.path.expanduser('~'), '.remote-session')
 
 API_URL = 'https://api.spotify.com/v1'
 REDIRECT_URL = 'http://localhost:1337'
 
-def get(url):
-    request = requests.get(API_URL + url, headers=get_headers())
-    request.raise_for_status()
-    return request.json()
 
-def post(url, params=None):
-    request = requests.post(API_URL + url, headers=get_headers(), params=params)
-    request.raise_for_status()
+def main():
+    parser = argparse.ArgumentParser(description='A remote control for spotify on the command line.')
+    subparsers = parser.add_subparsers(help='actions')
 
-def put(url, params=None):
-    request = requests.put(API_URL + url, headers=get_headers(), params=params)
-    request.raise_for_status()
+    parser_init = subparsers.add_parser('init', help='initialize OAUTH2 session')
+    parser_init.set_defaults(func=init)
+
+    parser_refresh = subparsers.add_parser('refresh', help='refresh OAUTH2 session')
+    parser_refresh.set_defaults(func=refresh)
+
+    parser_me = subparsers.add_parser('me', help='show current user')
+    parser_me.set_defaults(func=me)
+
+    parser_info = subparsers.add_parser('info', help='show current track')
+    parser_info.set_defaults(func=info)
+
+    parser_devices = subparsers.add_parser('devices', help='show available devices')
+    parser_devices.set_defaults(func=devices)
+
+    parser_play = subparsers.add_parser('play', help='start/resume playback')
+    parser_play.add_argument('device', nargs='?', default=False, help='name of the device')
+    parser_play.set_defaults(func=play)
+
+    parser_prev = subparsers.add_parser('prev', help='skip to previous track')
+    parser_prev.set_defaults(func=prev)
+
+    parser_next = subparsers.add_parser('next', help='skip to next track')
+    parser_next.set_defaults(func=next)
+
+    parser_pause = subparsers.add_parser('pause', help='pause playback')
+    parser_pause.set_defaults(func=pause)
+
+    parser_seek = subparsers.add_parser('seek', help='seek to position')
+    parser_seek.add_argument('position', help='position in seconds', type=float)
+    parser_seek.set_defaults(func=seek)
+
+    parser_volume = subparsers.add_parser('volume', help='set volume')
+    parser_volume.add_argument('volume', help='volume in %%', type=float)
+    parser_volume.set_defaults(func=volume)
+
+    parser_repeat = subparsers.add_parser('repeat', help='set repeat mode')
+    parser_repeat.add_argument('state', help='state of repeat mode', choices=('track', 'context', 'off'))
+    parser_repeat.set_defaults(func=repeat)
+
+    parser_shuffle = subparsers.add_parser('shuffle', help='set shuffle mode')
+    parser_shuffle.add_argument('state', help='state of shuffle mode', choices=('on', 'off'))
+    parser_shuffle.set_defaults(func=shuffle)
+
+    args = parser.parse_args()
+
+    try:
+        args.func(args)
+    except AttributeError:
+        parser.print_help()
+
+# helper functions/classes
+
+def session_decoder(payload):
+    return json.loads(payload.decode('utf-8'))
+
+def read_config():
+    return json.loads(open(CONFIG_FILE).read())
+
+def read_session():
+    return json.loads(open(SESSION_FILE).read())
+
+def get_headers():
+    return {
+        'Accept': 'application/json',
+        'Authorization': 'Bearer ' + read_session()['access_token']
+    }
 
 class HTTPRequestHandler(SimpleHTTPRequestHandler):
 
@@ -44,20 +103,22 @@ class HTTPRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response)
 
-def session_decoder(payload):
-    return json.loads(payload.decode('utf-8'))
+# lower level http functions
 
-def read_config():
-    return json.loads(open(CONFIG_FILE).read())
+def get(url):
+    request = requests.get(API_URL + url, headers=get_headers())
+    request.raise_for_status()
+    return request.json()
 
-def read_session():
-    return json.loads(open(SESSION_FILE).read())
+def post(url, params=None):
+    request = requests.post(API_URL + url, headers=get_headers(), params=params)
+    request.raise_for_status()
 
-def get_headers():
-    return {
-        'Accept': 'application/json',
-        'Authorization': 'Bearer ' + read_session()['access_token']
-    }
+def put(url, params=None):
+    request = requests.put(API_URL + url, headers=get_headers(), params=params)
+    request.raise_for_status()
+
+# higher level spotify api wrapper functions
 
 def init(args):
     config = read_config()
@@ -159,57 +220,6 @@ def repeat(args):
 def shuffle(args):
     put('/me/player/shuffle', {'state': args.state == 'on'})
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='A remote control for spotify on the command line.')
-    subparsers = parser.add_subparsers(help='actions')
-
-    parser_init = subparsers.add_parser('init', help='initialize OAUTH2 session')
-    parser_init.set_defaults(func=init)
-
-    parser_refresh = subparsers.add_parser('refresh', help='refresh OAUTH2 session')
-    parser_refresh.set_defaults(func=refresh)
-
-    parser_me = subparsers.add_parser('me', help='show current user')
-    parser_me.set_defaults(func=me)
-
-    parser_info = subparsers.add_parser('info', help='show current track')
-    parser_info.set_defaults(func=info)
-
-    parser_devices = subparsers.add_parser('devices', help='show available devices')
-    parser_devices.set_defaults(func=devices)
-
-    parser_play = subparsers.add_parser('play', help='start/resume playback')
-    parser_play.add_argument('device', nargs='?', default=False, help='name of the device')
-    parser_play.set_defaults(func=play)
-
-    parser_prev = subparsers.add_parser('prev', help='skip to previous track')
-    parser_prev.set_defaults(func=prev)
-
-    parser_next = subparsers.add_parser('next', help='skip to next track')
-    parser_next.set_defaults(func=next)
-
-    parser_pause = subparsers.add_parser('pause', help='pause playback')
-    parser_pause.set_defaults(func=pause)
-
-    parser_seek = subparsers.add_parser('seek', help='seek to position')
-    parser_seek.add_argument('position', help='position in seconds', type=float)
-    parser_seek.set_defaults(func=seek)
-
-    parser_volume = subparsers.add_parser('volume', help='set volume')
-    parser_volume.add_argument('volume', help='volume in %%', type=float)
-    parser_volume.set_defaults(func=volume)
-
-    parser_repeat = subparsers.add_parser('repeat', help='set repeat mode')
-    parser_repeat.add_argument('state', help='state of repeat mode', choices=('track', 'context', 'off'))
-    parser_repeat.set_defaults(func=repeat)
-
-    parser_shuffle = subparsers.add_parser('shuffle', help='set shuffle mode')
-    parser_shuffle.add_argument('state', help='state of shuffle mode', choices=('on', 'off'))
-    parser_shuffle.set_defaults(func=shuffle)
-
-    args = parser.parse_args()
-
-    try:
-        args.func(args)
-    except AttributeError:
-        parser.print_help()
+    main()
