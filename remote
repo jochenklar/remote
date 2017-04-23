@@ -26,6 +26,11 @@ def main():
     parser_refresh = subparsers.add_parser('refresh', help='refresh OAUTH2 session')
     parser_refresh.set_defaults(func=refresh)
 
+    parser_search = subparsers.add_parser('search', help='search on spotfy')
+    parser_search.add_argument('keyword', nargs='+', help='search keywords')
+    parser_search.add_argument('-p|--play', dest='play', action='store_true', help='automatically play first song')
+    parser_search.set_defaults(func=search)
+
     parser_me = subparsers.add_parser('me', help='show current user')
     parser_me.set_defaults(func=me)
 
@@ -35,8 +40,12 @@ def main():
     parser_devices = subparsers.add_parser('devices', help='show available devices')
     parser_devices.set_defaults(func=devices)
 
+    parser_transfer = subparsers.add_parser('transfer', help='transfer playback to a different device')
+    parser_transfer.add_argument('device', nargs='?', default=False, help='name of the device')
+    parser_transfer.set_defaults(func=transfer)
+
     parser_play = subparsers.add_parser('play', help='start/resume playback')
-    parser_play.add_argument('device', nargs='?', default=False, help='name of the device')
+    parser_play.add_argument('uri', nargs='?', default=False, help='spotify uri of what to play')
     parser_play.set_defaults(func=play)
 
     parser_prev = subparsers.add_parser('prev', help='skip to previous track')
@@ -65,11 +74,11 @@ def main():
     parser_shuffle.set_defaults(func=shuffle)
 
     args = parser.parse_args()
-
-    try:
-        args.func(args)
-    except AttributeError:
-        parser.print_help()
+    args.func(args)
+    # try:
+    #     args.func(args)
+    # except AttributeError:
+    #     parser.print_help()
 
 # helper functions/classes
 
@@ -105,18 +114,18 @@ class HTTPRequestHandler(SimpleHTTPRequestHandler):
 
 # lower level http functions
 
-def get(url):
-    request = requests.get(API_URL + url, headers=get_headers())
-    request.raise_for_status()
-    return request.json()
+def get(url, params=None):
+    response = requests.get(API_URL + url, headers=get_headers(), params=params)
+    response.raise_for_status()
+    return response.json()
 
-def post(url, params=None):
-    request = requests.post(API_URL + url, headers=get_headers(), params=params)
-    request.raise_for_status()
+def post(url, params=None, data={}):
+    response = requests.post(API_URL + url, headers=get_headers(), params=params, json=data)
+    response.raise_for_status()
 
-def put(url, params=None):
-    request = requests.put(API_URL + url, headers=get_headers(), params=params)
-    request.raise_for_status()
+def put(url, params=None, data={}):
+    response = requests.put(API_URL + url, headers=get_headers(), params=params, json=data)
+    response.raise_for_status()
 
 # higher level spotify api wrapper functions
 
@@ -171,6 +180,25 @@ def refresh(args):
     f.close()
     os.chmod(SESSION_FILE, 0o600)
 
+def search(args):
+    response = get('/search', {
+        'q': ' '.join(args.keyword),
+        'type': 'track',
+        'limit': 5
+    })
+
+    if args.play:
+        put('/me/player/play', {}, {
+            'uris': [response['tracks']['items'][0]['uri']]
+        })
+    else:
+        for item in response['tracks']['items']:
+            print('%(uri)s  %(name)s (%(artists)s)' % {
+                'name': item['name'],
+                'artists': ', '.join([artist['name'] for artist in item['artists']]),
+                'uri': item['uri']
+            })
+
 def me(args):
     response = get('/me')
     print(response['id'])
@@ -186,18 +214,24 @@ def devices(args):
     for device in response['devices']:
         print(device['name'], ('(active)' if device['is_active'] else ''))
 
+def transfer(args):
+    response = get('/me/player/devices')
+
+    try:
+        device_id = \
+            [device['id'] for device in response['devices'] if device['name'] == args.device][0]
+        put('/me/player/play', {'device_id': device_id})
+    except IndexError:
+        print('Device not found.')
+
 def play(args):
-    if not args.device:
+
+    if not args.uri:
         put('/me/player/play')
     else:
-        response = get('/me/player/devices')
-        try:
-            device_id = \
-                [device['id'] for device in response['devices'] if device['name'] == args.device][0]
-
-            put('/me/player/play', {'device_id': device_id})
-        except IndexError:
-            print('Device not found.')
+        put('/me/player/play', {}, {
+            'uris': [args.uri]
+        })
 
 def pause(args):
     put('/me/player/pause')
