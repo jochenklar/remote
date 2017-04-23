@@ -28,7 +28,6 @@ def main():
 
     parser_search = subparsers.add_parser('search', help='search on spotfy')
     parser_search.add_argument('keyword', nargs='+', help='search keywords')
-    parser_search.add_argument('-p|--play', dest='play', action='store_true', help='automatically play first song')
     parser_search.set_defaults(func=search)
 
     parser_me = subparsers.add_parser('me', help='show current user')
@@ -45,7 +44,7 @@ def main():
     parser_transfer.set_defaults(func=transfer)
 
     parser_play = subparsers.add_parser('play', help='start/resume playback')
-    parser_play.add_argument('uri', nargs='?', default=False, help='spotify uri of what to play')
+    parser_play.add_argument('search', nargs='*', default=False, help='spotify uri or search string')
     parser_play.set_defaults(func=play)
 
     parser_prev = subparsers.add_parser('prev', help='skip to previous track')
@@ -74,11 +73,11 @@ def main():
     parser_shuffle.set_defaults(func=shuffle)
 
     args = parser.parse_args()
-    args.func(args)
-    # try:
-    #     args.func(args)
-    # except AttributeError:
-    #     parser.print_help()
+
+    if hasattr(args, 'func'):
+        args.func(args)
+    else:
+        parser.print_help()
 
 # helper functions/classes
 
@@ -184,20 +183,15 @@ def search(args):
     response = get('/search', {
         'q': ' '.join(args.keyword),
         'type': 'track',
-        'limit': 5
+        'limit': 10
     })
 
-    if args.play:
-        put('/me/player/play', {}, {
-            'uris': [response['tracks']['items'][0]['uri']]
+    for item in response['tracks']['items']:
+        print('%(uri)s  %(name)s (%(artists)s)' % {
+            'name': item['name'],
+            'artists': ', '.join([artist['name'] for artist in item['artists']]),
+            'uri': item['uri']
         })
-    else:
-        for item in response['tracks']['items']:
-            print('%(uri)s  %(name)s (%(artists)s)' % {
-                'name': item['name'],
-                'artists': ', '.join([artist['name'] for artist in item['artists']]),
-                'uri': item['uri']
-            })
 
 def me(args):
     response = get('/me')
@@ -205,9 +199,11 @@ def me(args):
 
 def info(args):
     response = get('/me/player')
-    print(response['item']['name'])
-    print(', '.join([artist['name'] for artist in response['item']['artists']]))
-    print(response['item']['album']['name'])
+    item = response['item']
+
+    print('Name: ' + item['name'])
+    print('Artist(s): ' + ', '.join([artist['name'] for artist in item['artists']]))
+    print('Album: ' + item['album']['name'])
 
 def devices(args):
     response = get('/me/player/devices')
@@ -225,13 +221,30 @@ def transfer(args):
         print('Device not found.')
 
 def play(args):
-
-    if not args.uri:
+    if not args.search:
         put('/me/player/play')
-    else:
+    elif args.search[0].startswith('spotify:'):
         put('/me/player/play', {}, {
-            'uris': [args.uri]
+            'uris': [args.search[0]]
         })
+        info(args)
+    else:
+        response = get('/search', {
+            'q': ' '.join(args.search),
+            'type': 'track',
+            'limit': 1
+        })
+        if response['tracks']['items']:
+            item = response['tracks']['items'][0]
+            put('/me/player/play', {}, {
+                'context_uri': item['album']['uri'],
+                'offset': {
+                    'uri': item['uri']
+                }
+            })
+            info(args)
+        else:
+            print('No tracks found.')
 
 def pause(args):
     put('/me/player/pause')
